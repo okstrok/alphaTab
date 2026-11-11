@@ -30,6 +30,12 @@ export const DEMOS: DemoEntry[] = [
             'Plays an alphaTab score in step with a YouTube video using the EnabledExternalMedia player mode.'
     },
     {
+        href: '/demos/devtest/',
+        title: 'DevTest',
+        description:
+            'Live guitar input: a tuner reading your audio interface or microphone, with alphaTab tuning presets. The base for a future play-along mode.'
+    },
+    {
         href: '/demos/test-results/',
         title: 'Visual Test Results',
         description:
