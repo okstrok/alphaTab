@@ -26,14 +26,12 @@ export const DEMOS: DemoEntry[] = [
     {
         href: '/demos/youtube-sync/',
         title: 'YouTube Sync',
-        description:
-            'Plays an alphaTab score in step with a YouTube video using the EnabledExternalMedia player mode.'
+        description: 'Plays an alphaTab score in step with a YouTube video using the EnabledExternalMedia player mode.'
     },
     {
         href: '/demos/devtest/',
-        title: 'DevTest',
-        description:
-            'Live guitar input: a tuner reading your audio interface or microphone, with alphaTab tuning presets. The base for a future play-along mode.'
+        title: 'Tuner',
+        description: 'Tune your guitar live from an audio interface or microphone, with alphaTab tuning presets.'
     },
     {
         href: '/demos/test-results/',
