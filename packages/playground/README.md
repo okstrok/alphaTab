@@ -120,6 +120,7 @@ sheets are global.
 | Drum Recorder | [`demos/recorder/`](./demos/recorder/) | Programmatic score construction, dynamic system extension, tick-cache updates, MIDI extension/regeneration, `playedBeatChanged`. |
 | AlphaTex Editor | [`demos/alphatex-editor/`](./demos/alphatex-editor/) | Monaco with the alphaTex language server next to the live rendering; edits re-render with `reuseViewport`, dropped files are converted with `AlphaTexExporter`. |
 | YouTube Sync | [`demos/youtube-sync/`](./demos/youtube-sync/) | `EnabledExternalMedia` player mode driving alphaTab from a YouTube IFrame player. |
+| alphaJam | [`demos/alphajam/`](./demos/alphajam/) | Play-along practice on a real guitar: one guitar track rendered alone in a sliding (horizontal, smooth scroll) or sheet view, the rest as backing. Strikes from the live input are matched against the notes from `tickCache` (pitch class and octave, timing window); chords use a score-informed spectrum check. Note marks via `includeNoteBounds`, click latency calibration, end-of-song summary. |
 | DevTest | [`demos/devtest/`](./demos/devtest/) | Live guitar input: `GuitarInput` captures an audio input without voice processing, `PitchDetector` (YIN) finds the fundamental, the tuner shows note, cents and the target string of alphaTab's `Tuning` presets. Groundwork for a play-along mode. |
 | Visual Test Results | [`demos/test-results/`](./demos/test-results/) | Diff viewer for visual regression failures with accept-to-reference flow. |
 
