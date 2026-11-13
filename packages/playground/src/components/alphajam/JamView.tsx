@@ -16,11 +16,11 @@ import { frequencyToNote, midiToName } from '../devtest/Notes';
 import styles from './alphajam.module.scss';
 import { CalibrationDialog, SummaryDialog } from './Dialogs';
 import { JamInput } from './JamInput';
-import { accuracy, addResult, EMPTY_STATS, type EventResult, type JamStats } from './JamMatcher';
+import { accuracy, type EventResult, inRange, type JamStats, summarizeResults, type TickRange } from './JamMatcher';
 import { JamSession } from './JamSession';
 import { NoteMarks } from './NoteMarks';
 import { rmsToDb } from './OnsetDetector';
-import { isGuitarTrack } from './SongNotes';
+import { type ExpectedEvent, isGuitarTrack } from './SongNotes';
 
 type ViewMode = 'sliding' | 'sheet';
 type Staves = 'scoreTab' | 'tab' | 'score';
@@ -49,7 +49,6 @@ const TOLERANCES = [
     { ms: 100, label: 'Normal (±100 ms)' },
     { ms: 150, label: 'Relaxed (±150 ms)' }
 ];
-const SPEEDS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.9, 1];
 const FILE_ACCEPT = '.gp,.gp3,.gp4,.gp5,.gpx,.gp7,.gp8,.xml,.musicxml,.mxl,.capx,.alphatex,.atex,.tex,.txt';
 /** Where the playhead sits in the sliding view, in px from the left edge of the notation. */
 const SLIDING_PLAYHEAD_PX = 220;
@@ -112,14 +111,16 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
     const strikeListeners = useRef(new Set<(time: number) => void>());
 
     // Scoring
-    const [stats, setStats] = useState<JamStats>(EMPTY_STATS);
+    // The latest result of every note; replaying a passage replaces its results.
     const [results, setResults] = useState<ReadonlyMap<number, EventResult>>(new Map());
+    // Streaks follow the notes as they are played; the best one lasts until the song starts over.
+    const [streaks, setStreaks] = useState({ current: 0, best: 0 });
     const [lastResult, setLastResult] = useState<EventResult | null>(null);
-    const [eventCount, setEventCount] = useState(0);
+    const [events, setEvents] = useState<readonly ExpectedEvent[]>([]);
+    // The selected bars being played; only their notes count.
+    const [range, setRange] = useState<TickRange | null>(null);
     const [showSummary, setShowSummary] = useState(false);
     const [showCalibration, setShowCalibration] = useState(false);
-    const toleranceRef = useRef(prefs.toleranceMs);
-    toleranceRef.current = prefs.toleranceMs;
 
     useEffect(() => {
         const created = new JamInput({
@@ -157,7 +158,10 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
             input.current,
             {
                 onResult: result => {
-                    setStats(s => addResult(s, result, toleranceRef.current));
+                    setStreaks(s => {
+                        const current = result.outcome === 'hit' ? s.current + 1 : 0;
+                        return { current, best: Math.max(s.best, current) };
+                    });
                     setLastResult(result);
                     setResults(previous => {
                         const next = new Map(previous);
@@ -169,17 +173,19 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
                     setShowSummary(false);
                     setLastResult(null);
                     if (fromStart) {
-                        setStats(EMPTY_STATS);
+                        setStreaks({ current: 0, best: 0 });
                         setResults(new Map());
                     } else {
-                        // Practicing a section again: clear its marks, keep the running score.
+                        // Practicing a section again: its notes are judged anew, the notes before it keep their result.
+                        setStreaks(s => ({ current: 0, best: s.best }));
                         setResults(previous => new Map([...previous].filter(([, r]) => r.event.tick < tick)));
                     }
                 },
                 onFinished: () => setShowSummary(true),
-                onEventsChanged: events => {
-                    setEventCount(events.length);
-                    setStats(EMPTY_STATS);
+                onRangeChanged: setRange,
+                onEventsChanged: changed => {
+                    setEvents(changed);
+                    setStreaks({ current: 0, best: 0 });
                     setResults(new Map());
                     setLastResult(null);
                 }
@@ -187,6 +193,7 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
             { latencyMs: prefs.latencyMs, toleranceMs: prefs.toleranceMs, a4: 440 }
         );
         session.current = created;
+        setRange(created.range);
         return () => {
             created.dispose();
             session.current = null;
@@ -267,6 +274,15 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
             ? 'This song has no guitar track. alphaJam needs a track with six or more strings.'
             : null;
 
+    const stats: JamStats = useMemo(
+        () => ({
+            ...summarizeResults(results.values(), prefs.toleranceMs, range),
+            streak: streaks.current,
+            bestStreak: streaks.best
+        }),
+        [results, streaks, prefs.toleranceMs, range]
+    );
+    const toPlay = useMemo(() => events.filter(e => inRange(e.tick, range)).length, [events, range]);
     const share = accuracy(stats);
 
     return (
@@ -315,17 +331,20 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
                                     { v: 'score', l: 'Staff' }
                                 ]}
                             />
-                            <label className={styles.field}>
-                                <span>Speed</span>
-                                <select
+                            <label className={clsx(styles.field, styles.rangeField)}>
+                                <span>
+                                    Speed <b>{Math.round(speed * 100)}%</b>
+                                </span>
+                                <input
+                                    type="range"
+                                    min={0.25}
+                                    max={1.5}
+                                    step={0.05}
                                     value={speed}
-                                    onChange={e => controls?.setPlaybackSpeed(Number(e.target.value))}>
-                                    {SPEEDS.map(s => (
-                                        <option key={s} value={s}>
-                                            {Math.round(s * 100)}%
-                                        </option>
-                                    ))}
-                                </select>
+                                    onChange={e => controls?.setPlaybackSpeed(Number(e.target.value))}
+                                    onDoubleClick={() => controls?.setPlaybackSpeed(1)}
+                                    title="Double-click for 100%"
+                                />
                             </label>
                             <span className={styles.spacer} />
                             <button
@@ -439,7 +458,7 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
                         {!running && !inputError && score && guitarTracks.length > 0 && (
                             <p className={styles.hint}>
                                 Connect your guitar through an audio interface, press <b>Start input</b>, then play.
-                                {isPlaying ? '' : ` ${eventCount} notes to play on this track.`}
+                                {isPlaying ? '' : ` ${toPlay} notes to play ${range ? 'in the selected bars' : 'on this track'}.`}
                             </p>
                         )}
                     </div>
@@ -463,6 +482,7 @@ export function JamView({ doc }: { doc: ScoreDocumentState }) {
                     stats={stats}
                     toleranceMs={prefs.toleranceMs}
                     latencyMs={prefs.latencyMs}
+                    selection={range !== null}
                     onApplyLatency={latencyMs => update({ latencyMs })}
                     onPlayAgain={() => {
                         setShowSummary(false);

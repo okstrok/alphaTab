@@ -139,6 +139,8 @@ interface SummaryDialogProps {
     stats: JamStats;
     toleranceMs: number;
     latencyMs: number;
+    /** Only the selected bars were played. */
+    selection?: boolean;
     onApplyLatency: (latencyMs: number) => void;
     onPlayAgain: () => void;
     onClose: () => void;
@@ -149,6 +151,7 @@ export function SummaryDialog({
     stats,
     toleranceMs,
     latencyMs,
+    selection = false,
     onApplyLatency,
     onPlayAgain,
     onClose
@@ -162,7 +165,7 @@ export function SummaryDialog({
 
     return (
         <Dialog
-            title="Song complete"
+            title={selection ? 'Selection complete' : 'Song complete'}
             onClose={onClose}
             footer={
                 <div className={styles.dialogFooter}>

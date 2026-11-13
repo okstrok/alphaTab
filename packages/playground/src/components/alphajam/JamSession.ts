@@ -1,7 +1,7 @@
 import * as alphaTab from '@coderline/alphatab';
 import type { JamInput } from './JamInput';
 import { SPECTRUM_SIZE } from './JamInput';
-import { type EventResult, JamMatcher } from './JamMatcher';
+import { type EventResult, inRange, JamMatcher, type TickRange } from './JamMatcher';
 import type { Onset } from './OnsetDetector';
 import { judgeFrames, SETTLE_MS } from './PitchJudge';
 import { SongClock } from './SongClock';
@@ -12,8 +12,10 @@ export interface JamSessionListener {
     onResult(result: EventResult): void;
     /** Scoring starts over at `tick`: playback started, was sought or a loop restarted. */
     onRestart(tick: number, fromStart: boolean): void;
-    /** The song played to its end. */
+    /** The song, or the selected bars, played to the end. */
     onFinished(): void;
+    /** Bars were selected to play just those (`range`), or the selection was cleared (null). */
+    onRangeChanged(range: TickRange | null): void;
     /** The notes to play changed (new song or track). */
     onEventsChanged(events: readonly ExpectedEvent[]): void;
 }
@@ -41,7 +43,8 @@ export class JamSession {
     private _playing = false;
     private _timer: number | undefined;
     private readonly _unsubscribe: (() => void)[] = [];
-    private _firstEventTick = 0;
+    /** The selected bars that play, null for the whole song. */
+    private _range: TickRange | null = null;
     /** Tempo of the latest playback, in ticks per ms, for judging the last notes after the end. */
     private _lastRate = 0;
     /** While the last notes are judged after the end, the player's jump back to the start is ignored. */
@@ -57,14 +60,20 @@ export class JamSession {
             _api.midiLoaded.on(() => this._rebuild()),
             _api.playerPositionChanged.on(e => this._onPosition(e)),
             _api.playerStateChanged.on(e => this._onState(e)),
-            _api.playerFinished.on(() => this._onFinished())
+            _api.playerFinished.on(() => this._onFinished()),
+            _api.playbackRangeChanged.on(e => this._setRange(e.playbackRange))
         );
+        this._range = _api.playbackRange ? { ..._api.playbackRange } : null;
         this._playing = _api.playerState === alphaTab.synth.PlayerState.Playing;
         this._timer = window.setInterval(() => this._update(), UPDATE_MS);
     }
 
     public get events(): readonly ExpectedEvent[] {
         return this._matcher?.events ?? [];
+    }
+
+    public get range(): TickRange | null {
+        return this._range;
     }
 
     public setOptions(options: JamSessionOptions): void {
@@ -100,7 +109,6 @@ export class JamSession {
     private _rebuild(): void {
         const lookup = this._api.tickCache;
         const events = lookup && this._trackIndex !== null ? collectExpectedEvents(lookup, this._trackIndex) : [];
-        this._firstEventTick = events[0]?.tick ?? 0;
         this._matcher = new JamMatcher(
             events,
             (time, midis) =>
@@ -145,7 +153,14 @@ export class JamSession {
         // A strike a little ahead of a note right at the restart point still counts for it.
         const rate = this._clock.rate || this._lastRate || ticksPerMs(120);
         this._matcher.restart(tick - this._options.toleranceMs * rate);
-        this._listener.onRestart(tick, tick <= this._firstEventTick);
+        // Starting before the first note to play (of the selection, if any) is a new take.
+        const first = this._matcher.events.find(e => inRange(e.tick, this._range));
+        this._listener.onRestart(tick, !first || tick <= first.tick);
+    }
+
+    private _setRange(range: alphaTab.synth.PlaybackRange | null): void {
+        this._range = range ? { startTick: range.startTick, endTick: range.endTick } : null;
+        this._listener.onRangeChanged(this._range);
     }
 
     private _update(): void {
@@ -163,9 +178,11 @@ export class JamSession {
     }
 
     private _onFinished(): void {
-        // Judge the last notes with the tempo they were played at, then report the end.
+        // Judge the last notes with the tempo they were played at, then report the end. With bars
+        // selected, the notes after them were not played and stay unjudged.
         const matcher = this._matcher;
         const rate = this._lastRate;
+        const end = this._range?.endTick ?? Number.POSITIVE_INFINITY;
         if (matcher && rate > 0) {
             this._finishing = true;
             window.setTimeout(
@@ -174,7 +191,7 @@ export class JamSession {
                     if (matcher !== this._matcher) {
                         return;
                     }
-                    for (const result of matcher.update(Number.POSITIVE_INFINITY, rate)) {
+                    for (const result of matcher.finish(end, rate)) {
                         this._listener.onResult(result);
                     }
                     matcher.restart(this._api.tickPosition);

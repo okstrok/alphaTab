@@ -1,7 +1,7 @@
 import * as alphaTab from '@coderline/alphatab';
 import { describe, expect, it } from 'vitest';
 import { CLICKS, evaluateCalibration, LEAD_IN } from '../../src/components/alphajam/Calibration';
-import { addResult, EMPTY_STATS, JamMatcher, type PitchVerdict } from '../../src/components/alphajam/JamMatcher';
+import { addResult, EMPTY_STATS, type EventResult, JamMatcher, type PitchVerdict, summarizeResults } from '../../src/components/alphajam/JamMatcher';
 import { detectPresentNotes } from '../../src/components/alphajam/NotePresence';
 import { OnsetDetector } from '../../src/components/alphajam/OnsetDetector';
 import { type AnalysisFrame, judgeFrames } from '../../src/components/alphajam/PitchJudge';
@@ -242,6 +242,15 @@ describe('JamMatcher', () => {
         expect(matcher.pending?.index).toBe(1);
     });
 
+    it('judges only the selected bars when playback ends', () => {
+        const matcher = new JamMatcher(events, judgeHearing([40]), options);
+        matcher.addStrike(0, 0);
+        // Bars selected up to the chord: the chord was not played and is not judged.
+        expect(matcher.finish(1920, rate).map(r => r.event.index)).toEqual([0, 1]);
+        expect(matcher.pending?.index).toBe(2);
+        expect(matcher.finish(Number.POSITIVE_INFINITY, rate).map(r => r.event.index)).toEqual([2]);
+    });
+
     it('keeps streaks and timing stats', () => {
         const hit = { event: events[0], outcome: 'hit' as const, notes: [true], offsetMs: 50, played: 40 };
         const miss = { event: events[0], outcome: 'missed' as const, notes: [false], offsetMs: null, played: null };
@@ -264,5 +273,38 @@ describe('Calibration', () => {
 
     it('needs enough strikes', () => {
         expect(evaluateCalibration(clicks, [clicks[5] + 50, clicks[6] + 50]).latencyMs).toBeNull();
+    });
+});
+
+describe('summarizeResults', () => {
+    const result = (index: number, hit: boolean, offsetMs = 0): EventResult => ({
+        event: { index, tick: index * 960, beats: [], notes: [{ noteId: index, midi: 40 }] },
+        outcome: hit ? 'hit' : 'missed',
+        notes: [hit],
+        offsetMs: hit ? offsetMs : null,
+        played: null
+    });
+
+    it('counts only the notes of the selected bars', () => {
+        const results = [result(0, true), result(1, false), result(2, true), result(3, true)];
+        expect(summarizeResults(results, 100, { startTick: 960, endTick: 2880 })).toMatchObject({ judged: 2, hits: 1 });
+        expect(summarizeResults(results, 100, null)).toMatchObject({ judged: 4, hits: 3 });
+    });
+
+    it('counts the latest attempt of every note once', () => {
+        // A first take: notes 0..3, two of them missed.
+        const results = new Map<number, EventResult>();
+        for (const r of [result(0, true), result(1, false), result(2, true), result(3, false)]) {
+            results.set(r.event.index, r);
+        }
+        expect(summarizeResults(results.values(), 100)).toMatchObject({ judged: 4, hits: 2 });
+
+        // Rewound to note 2 and played it again: notes 2 and 3 are replaced, not added.
+        results.delete(2);
+        results.delete(3);
+        for (const r of [result(2, true, 40), result(3, true)]) {
+            results.set(r.event.index, r);
+        }
+        expect(summarizeResults(results.values(), 100)).toMatchObject({ judged: 4, hits: 3, late: 1 });
     });
 });

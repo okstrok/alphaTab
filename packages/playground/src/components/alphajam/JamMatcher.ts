@@ -111,6 +111,20 @@ export class JamMatcher {
         return results;
     }
 
+    /**
+     * Judges every event left before `endTick` once playback has ended, e.g. at the end of the song
+     * (`Infinity`) or of the selected bars. Events from `endTick` on stay unjudged.
+     */
+    public finish(endTick: number, rate: number): EventResult[] {
+        if (rate <= 0) {
+            return [];
+        }
+        const tolerance = this.options.toleranceMs * rate;
+        const settle = this.options.settleMs * rate;
+        // `update` judges an event once the clock passed its tick by tolerance + settle.
+        return this.update(Number.isFinite(endTick) ? endTick - 1 + tolerance + settle : endTick, rate);
+    }
+
     /** Starts over at playback `tick`, e.g. after a seek or a loop restart. Earlier events are skipped. */
     public restart(tick: number): void {
         this._strikes = [];
@@ -147,6 +161,17 @@ export class JamMatcher {
 }
 
 /** Running score of a play-through. */
+/** The selected bars being played (alphaTab's playback range), in playback ticks; end exclusive. */
+export interface TickRange {
+    startTick: number;
+    endTick: number;
+}
+
+/** Whether `tick` is in the selected bars; everything is when nothing is selected. */
+export function inRange(tick: number, range: TickRange | null): boolean {
+    return !range || (tick >= range.startTick && tick < range.endTick);
+}
+
 export interface JamStats {
     judged: number;
     hits: number;
@@ -183,6 +208,23 @@ export function addResult(stats: JamStats, result: EventResult, toleranceMs: num
         early: stats.early + (hit && offset < -off ? 1 : 0),
         late: stats.late + (hit && offset > off ? 1 : 0)
     };
+}
+
+/**
+ * The score of the latest attempt at each note: replaying a passage replaces its results instead of
+ * counting them again. Streaks come from the order the notes were played and are set by the caller.
+ */
+export function summarizeResults(
+    results: Iterable<EventResult>,
+    toleranceMs: number,
+    range: TickRange | null = null
+): JamStats {
+    let stats = EMPTY_STATS;
+    const counted = [...results].filter(r => inRange(r.event.tick, range));
+    for (const result of counted.sort((a, b) => a.event.tick - b.event.tick)) {
+        stats = addResult(stats, result, toleranceMs);
+    }
+    return { ...stats, streak: 0, bestStreak: 0 };
 }
 
 export function accuracy(stats: JamStats): number | null {
